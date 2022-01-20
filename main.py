@@ -170,7 +170,7 @@ def do_work(obj):
     sema.release()
 
 
-def handler(request):
+def handler(request, event):
     config = json.loads(SCHEDULE_CONFIG)
     threads = []
     for schedule in config:
@@ -184,4 +184,4 @@ def handler(request):
 
 
 if __name__ == "__main__":
-    handler(None)
+    handler(None, None)

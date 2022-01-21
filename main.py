@@ -18,6 +18,7 @@ logger = logging.getLogger()
 
 PAGERDUTY_API_KEY = os.environ['PAGERDUTY_API_KEY']
 SLACK_API_KEY = os.environ['SLACK_API_KEY']
+# [{"slack_channel_id": "foo", "pd_schedule_id": "bar"},{"slack_channel_id": "boo", "pd_schedule_id": "baz,moz"}]
 SCHEDULE_CONFIG = os.environ['SCHEDULE_CONFIG']
 
 

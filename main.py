@@ -25,14 +25,10 @@ SCHEDULE_CONFIG = os.environ['SCHEDULE_CONFIG']
 def get_user(schedule_id):
     headers = {
         'Accept': 'application/vnd.pagerduty+json;version=2',
-        'Authorization': 'Token token={token}'.format(token=PAGERDUTY_API_KEY)
+        'Authorization': f"Token token={PAGERDUTY_API_KEY}"
     }
-    normal_url = 'https://api.pagerduty.com/schedules/{0}/users'.format(
-        schedule_id
-    )
-    override_url = 'https://api.pagerduty.com/schedules/{0}/overrides'.format(
-        schedule_id
-    )
+    normal_url = f'https://api.pagerduty.com/schedules/{schedule_id}/users'
+    override_url = f'https://api.pagerduty.com/schedules/{schedule_id}/overrides'
     # This value should be less than the running interval
     # It is best to use UTC for the datetime object
     now = datetime.now(timezone.utc)
@@ -42,7 +38,7 @@ def get_user(schedule_id):
     payload['until'] = now.isoformat()
     normal = get(normal_url, headers=headers, params=payload)
     if normal.status_code == 404:
-        logger.critical("ABORT: Not a valid schedule: {}".format(schedule_id))
+        logger.critical(f"ABORT: Not a valid schedule: {schedule_id}")
         return False
     try:
         username = normal.json()['users'][0]['name']
@@ -57,16 +53,16 @@ def get_user(schedule_id):
     except IndexError:
         username = "No One :thisisfine:"
 
-    logger.info("Currently on call: {}".format(username))
+    logger.info(f"Currently on call: {username}")
     return username
 
 
 def get_pd_schedule_name(schedule_id):
     headers = {
         'Accept': 'application/vnd.pagerduty+json;version=2',
-        'Authorization': 'Token token={token}'.format(token=PAGERDUTY_API_KEY)
+        'Authorization': f"Token token={PAGERDUTY_API_KEY}"
     }
-    url = 'https://api.pagerduty.com/schedules/{0}'.format(schedule_id)
+    url = f'https://api.pagerduty.com/schedules/{schedule_id}'
     r = get(url, headers=headers)
     try:
         return r.json()['schedule']['name']
@@ -88,14 +84,12 @@ def get_slack_topic(channel):
         return current
     except KeyError:
         logger.critical(
-            "Could not find '{}' on slack, has the on-call bot been removed from this channel?".format(channel))
+            f"Could not find '{channel}' on slack, has the on-call bot been removed from this channel?")
 
 
 def update_slack_topic(channel, proposed_update):
-    logger.debug("Entered update_slack_topic() with: {} {}".format(
-        channel,
-        proposed_update)
-    )
+    logger.debug(
+        f"Entered update_slack_topic() with: {channel} {proposed_update}")
     payload = {}
     payload['token'] = SLACK_API_KEY
     payload['channel'] = channel
@@ -141,7 +135,7 @@ def update_slack_topic(channel, proposed_update):
 
     if proposed_update != first_part:
         # slack limits topic to 250 chars
-        topic = "{} | {}".format(proposed_update, second_part)
+        topic = f"{proposed_update} | {second_part}"
         if len(topic) > 250:
             topic = topic[0:247] + "..."
         payload['topic'] = topic
@@ -161,10 +155,7 @@ def do_work(obj):
     schedule_name = get_pd_schedule_name(obj['pd_schedule_id'])
     logger.debug(f"username={username}, schedule_name={schedule_name}")
     if username is not None:  # then it is valid and update the chat topic
-        topic = "{} is on-call for {}".format(
-            username,
-            schedule_name
-        )
+        topic = f"{username} is on-call for {schedule_name}"
         # 'slack' may contain multiple channels seperated by whitespace
         for channel in obj['slack_channel_id'].split(','):
             update_slack_topic(channel, topic)

@@ -1,6 +1,7 @@
 # pd-oncall-slack-topic
 
 A slightly modified version of [pagerduty/pd-oncall-chat-topic](https://github.com/PagerDuty/pd-oncall-chat-topic) that takes a list PD Schedule/Slack Channels as a JSON environment variable instead of reading from a database, and without any of the infrastructure code.
+![flow diagram](./docs/flow.png 'Flow Diagram')
 
 Given the following environment variables:
 

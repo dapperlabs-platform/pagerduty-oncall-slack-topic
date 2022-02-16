@@ -7,17 +7,26 @@ import threading
 import logging
 import re
 import json
+from google.cloud import secretmanager
 
 # semaphore limit of 5, picked this number arbitrarily
 maxthreads = 5
 sema = threading.Semaphore(value=maxthreads)
 
+smclient = secretmanager.SecretManagerServiceClient()
+
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger()
 
 
-PAGERDUTY_API_KEY = os.environ['PAGERDUTY_API_KEY']
-SLACK_API_KEY = os.environ['SLACK_API_KEY']
+def secret_version(secret_name):
+    return f"projects/{os.environ['GCP_PROJECT_ID']}/secrets/{secret_name}/versions/latest"
+
+
+PAGERDUTY_API_KEY = smclient.access_secret_version(request={"name": secret_version(
+    os.environ['PAGERDUTY_API_KEY_SECRET_NAME'])}).payload.data.decode("UTF-8")
+SLACK_API_KEY = smclient.access_secret_version(request={"name": secret_version(
+    os.environ['SLACK_API_KEY_SECRET_NAME'])}).payload.data.decode("UTF-8")
 # [{"slack_channel_id": "foo", "pd_schedule_id": "bar"},{"slack_channel_id": "boo", "pd_schedule_id": "baz,moz"}]
 SCHEDULE_CONFIG = os.environ['SCHEDULE_CONFIG']
 
@@ -100,8 +109,9 @@ def update_slack_topic(channel, proposed_update):
     # then replace the rest of the string with the address
     # None of this is really ideal because we lose the "linking" aspect in the
     # Slack Topic.
+    slack_topic = get_slack_topic(channel)
     current_full_topic = re.sub(r'<mailto:([a-zA-Z@.]*)(?:[|a-zA-Z@.]*)>',
-                                r'\1', get_slack_topic(channel))
+                                r'\1', slack_topic)
     # Also handle Slack "Subteams" in the same way as above
     current_full_topic = re.sub(r'<(?:!subteam\^[A-Z0-9|]*)([@A-Za-z-]*)>', r'\1',
                                 current_full_topic)
@@ -156,7 +166,7 @@ def do_work(obj):
     logger.debug(f"username={username}, schedule_name={schedule_name}")
     if username is not None:  # then it is valid and update the chat topic
         topic = f"{username} is on-call for {schedule_name}"
-        # 'slack' may contain multiple channels seperated by whitespace
+        # 'slack' may contain multiple channels seperated by comma
         for channel in obj['slack_channel_id'].split(','):
             update_slack_topic(channel, topic)
     sema.release()

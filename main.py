@@ -19,14 +19,10 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger()
 
 
-def secret_version(secret_name):
-    return f"projects/{os.environ['GCP_PROJECT_ID']}/secrets/{secret_name}/versions/latest"
-
-
-PAGERDUTY_API_KEY = smclient.access_secret_version(request={"name": secret_version(
-    os.environ['PAGERDUTY_API_KEY_SECRET_NAME'])}).payload.data.decode("UTF-8")
-SLACK_API_KEY = smclient.access_secret_version(request={"name": secret_version(
-    os.environ['SLACK_API_KEY_SECRET_NAME'])}).payload.data.decode("UTF-8")
+PAGERDUTY_API_KEY = smclient.access_secret_version(
+    request={"name": os.environ['PAGERDUTY_API_KEY_SECRET_NAME']}).payload.data.decode("UTF-8")
+SLACK_API_KEY = smclient.access_secret_version(
+    request={"name": os.environ['SLACK_API_KEY_SECRET_NAME']}).payload.data.decode("UTF-8")
 # [{"slack_channel_id": "foo", "pd_schedule_id": "bar"},{"slack_channel_id": "boo", "pd_schedule_id": "baz,moz"}]
 SCHEDULE_CONFIG = os.environ['SCHEDULE_CONFIG']
 

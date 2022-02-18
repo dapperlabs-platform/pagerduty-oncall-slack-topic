@@ -126,8 +126,10 @@ def do_work(obj):
             schedule_name = get_pd_schedule_name(schedule_id)
             topic += f"{username} is on-call for {schedule_name} | "
             logger.debug(f"username={username}, schedule_name={schedule_name}")
-    topic = topic[0:-3]
-    update_slack_topic(obj["slack_channel_id"], topic)
+    if topic != "":
+        update_slack_topic(obj["slack_channel_id"], topic[0:-3])
+    else:
+        logger.info("Not updating slack, topic is empty")
     sema.release()
 
 

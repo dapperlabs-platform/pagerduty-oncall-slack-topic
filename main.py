@@ -21,9 +21,9 @@ logger = logging.getLogger()
 # [{"slack_channel_id": "foo", "pd_schedule_id": "bar"},{"slack_channel_id": "boo", "pd_schedule_id": "baz,moz"}]
 SCHEDULE_CONFIG = os.environ['SCHEDULE_CONFIG']
 PAGERDUTY_API_KEY = smclient.access_secret_version(
-    request={"name": os.environ['PAGERDUTY_API_KEY_SECRET_NAME']}).payload.data.decode("UTF-8") if os.getenv(['PAGERDUTY_API_KEY']) is None else os.environ['PAGERDUTY_API_KEY']
+    request={"name": os.environ['PAGERDUTY_API_KEY_SECRET_NAME']}).payload.data.decode("UTF-8") if os.getenv('PAGERDUTY_API_KEY') is None else os.environ['PAGERDUTY_API_KEY']
 SLACK_API_KEY = smclient.access_secret_version(
-    request={"name": os.environ['SLACK_API_KEY_SECRET_NAME']}).payload.data.decode("UTF-8") if os.getenv(['SLACK_API_KEY']) is None else os.environ['SLACK_API_KEY']
+    request={"name": os.environ['SLACK_API_KEY_SECRET_NAME']}).payload.data.decode("UTF-8") if os.getenv('SLACK_API_KEY') is None else os.environ['SLACK_API_KEY']
 
 
 def get_user(schedule_id):

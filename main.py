@@ -18,13 +18,12 @@ smclient = secretmanager.SecretManagerServiceClient()
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger()
 
-
-PAGERDUTY_API_KEY = smclient.access_secret_version(
-    request={"name": os.environ['PAGERDUTY_API_KEY_SECRET_NAME']}).payload.data.decode("UTF-8")
-SLACK_API_KEY = smclient.access_secret_version(
-    request={"name": os.environ['SLACK_API_KEY_SECRET_NAME']}).payload.data.decode("UTF-8")
 # [{"slack_channel_id": "foo", "pd_schedule_id": "bar"},{"slack_channel_id": "boo", "pd_schedule_id": "baz,moz"}]
 SCHEDULE_CONFIG = os.environ['SCHEDULE_CONFIG']
+PAGERDUTY_API_KEY = smclient.access_secret_version(
+    request={"name": os.environ['PAGERDUTY_API_KEY_SECRET_NAME']}).payload.data.decode("UTF-8") if os.environ['PAGERDUTY_API_KEY'] is None else os.environ['PAGERDUTY_API_KEY']
+SLACK_API_KEY = smclient.access_secret_version(
+    request={"name": os.environ['SLACK_API_KEY_SECRET_NAME']}).payload.data.decode("UTF-8") if os.environ['SLACK_API_KEY'] is None else os.environ['SLACK_API_KEY']
 
 
 def get_user(schedule_id):
@@ -99,51 +98,13 @@ def update_slack_topic(channel, proposed_update):
     payload['token'] = SLACK_API_KEY
     payload['channel'] = channel
 
-    # This is tricky to get correct for all the edge cases
-    # Because Slack adds a '<mailto:foo@example.com|foo@example.com>' behind the
-    # scenes, we need to match the email address in the first capturing group,
-    # then replace the rest of the string with the address
-    # None of this is really ideal because we lose the "linking" aspect in the
-    # Slack Topic.
     slack_topic = get_slack_topic(channel)
-    current_full_topic = re.sub(r'<mailto:([a-zA-Z@.]*)(?:[|a-zA-Z@.]*)>',
-                                r'\1', slack_topic)
-    # Also handle Slack "Subteams" in the same way as above
-    current_full_topic = re.sub(r'<(?:!subteam\^[A-Z0-9|]*)([@A-Za-z-]*)>', r'\1',
-                                current_full_topic)
-    # Also handle Slack Channels in the same way as above
-    current_full_topic = re.sub(r'<(?:#[A-Z0-9|]*)([@A-Za-z-]*)>', r'#\1',
-                                current_full_topic)
 
-    if current_full_topic:
-        # This should match every case EXCEPT when onboarding a channel and it
-        # already has a '|' in it. Workaround: Fix topic again and it will be
-        # correct in the future
-        current_full_topic_delimit_count = current_full_topic.count('|')
-        c_delimit_count = current_full_topic_delimit_count - 1
-        if c_delimit_count < 1:
-            c_delimit_count = 1
-
-        # This rsplit is fragile too!
-        # The original intent was to preserve a '|' in the scehdule name but
-        # that means multiple pipes in the topic do not work...
-        try:
-            first_part = current_full_topic.rsplit(
-                '|', c_delimit_count)[0].strip()
-            second_part = current_full_topic.replace(
-                first_part + " |", "").strip()
-        except IndexError:  # if there is no '|' in the topic
-            first_part = "none"
-            second_part = current_full_topic
-    else:
-        first_part = "none"
-        second_part = "."  # if there is no topic, just add something
-
-    if proposed_update != first_part:
+    if proposed_update != slack_topic:
+        topic = proposed_update
         # slack limits topic to 250 chars
-        topic = f"{proposed_update} | {second_part}"
-        if len(topic) > 250:
-            topic = topic[0:247] + "..."
+        if len(proposed_update) > 250:
+            topic = proposed_update[0:247] + "..."
         payload['topic'] = topic
         r = post(
             'https://slack.com/api/conversations.setTopic', data=payload)
@@ -157,14 +118,16 @@ def do_work(obj):
     # entrypoint of the thread
     sema.acquire()
     logger.debug("Operating on {}".format(obj))
-    username = get_user(obj['pd_schedule_id'])
-    schedule_name = get_pd_schedule_name(obj['pd_schedule_id'])
-    logger.debug(f"username={username}, schedule_name={schedule_name}")
-    if username is not None:  # then it is valid and update the chat topic
-        topic = f"{username} is on-call for {schedule_name}"
-        # 'slack' may contain multiple channels seperated by comma
-        for channel in obj['slack_channel_id'].split(','):
-            update_slack_topic(channel, topic)
+    topic = ""
+    # 'pd_schedule_id' may contain multiple channels seperated by comma
+    for schedule_id in obj['pd_schedule_id'].split(","):
+        username = get_user(schedule_id)
+        if username is not None:  # then it is valid and update the chat topic
+            schedule_name = get_pd_schedule_name(schedule_id)
+            topic += f"{username} is on-call for {schedule_name} | "
+            logger.debug(f"username={username}, schedule_name={schedule_name}")
+    topic = topic[0:-3]
+    update_slack_topic(obj["slack_channel_id"], topic)
     sema.release()
 
 

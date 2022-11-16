@@ -20,11 +20,12 @@ logger = logging.getLogger()
 
 # [{"slack_channel_id": "foo", "pd_schedule_id": "bar"},{"slack_channel_id": "boo", "pd_schedule_id": "baz,moz"}]
 SCHEDULE_CONFIG = os.environ['SCHEDULE_CONFIG']
+SLACK_TAG = os.environ['SLACK_TAG']
+SLACK_GROUP_ID = os.environ['SLACK_GROUP_ID']
 PAGERDUTY_API_KEY = smclient.access_secret_version(
     request={"name": os.environ['PAGERDUTY_API_KEY_SECRET_NAME']}).payload.data.decode("UTF-8") if os.getenv('PAGERDUTY_API_KEY') is None else os.environ['PAGERDUTY_API_KEY']
 SLACK_API_KEY = smclient.access_secret_version(
     request={"name": os.environ['SLACK_API_KEY_SECRET_NAME']}).payload.data.decode("UTF-8") if os.getenv('SLACK_API_KEY') is None else os.environ['SLACK_API_KEY']
-
 
 def get_user(schedule_id):
     headers = {
@@ -32,7 +33,6 @@ def get_user(schedule_id):
         'Authorization': f"Token token={PAGERDUTY_API_KEY}"
     }
     normal_url = f'https://api.pagerduty.com/schedules/{schedule_id}/users'
-    override_url = f'https://api.pagerduty.com/schedules/{schedule_id}/overrides'
     # This value should be less than the running interval
     # It is best to use UTC for the datetime object
     now = datetime.now(timezone.utc)
@@ -42,23 +42,12 @@ def get_user(schedule_id):
     payload['until'] = now.isoformat()
     normal = get(normal_url, headers=headers, params=payload)
     if normal.status_code == 404:
-        logger.critical(f"ABORT: Not a valid schedule: {schedule_id}")
+        #logger.critical(f"ABORT: Not a valid schedule: {schedule_id}")
         return False
     try:
-        username = normal.json()['users'][0]['name']
-        # Check for overrides
-        # If there is *any* override, then the above username is an override
-        # over the normal schedule. The problem must be approached this way
-        # because the /overrides endpoint does not guarentee an order of the
-        # output.
-        override = get(override_url, headers=headers, params=payload)
-        if override.json()['overrides']:  # is not empty list
-            username = username + " (Override)"
+        return normal.json()['users'][0]
     except IndexError:
-        username = "No One :thisisfine:"
-
-    logger.info(f"Currently on call: {username}")
-    return username
+        print(f"No user found for schedule {schedule_id}")
 
 
 def get_pd_schedule_name(schedule_id):
@@ -74,6 +63,35 @@ def get_pd_schedule_name(schedule_id):
         logger.debug(r.status_code)
         logger.debug(r.json())
         return None
+
+
+# Looks up user by email and returns userID
+def get_user_id(email):
+    payload = {}
+    payload['token'] = SLACK_API_KEY
+    payload['email'] = email
+    try:
+        r = post('https://slack.com/api/users.lookupByEmail', data=payload)
+        current = r.json()['user']['id']
+        logger.debug("Current Topic: '{}'".format(current))
+        return current
+    except KeyError:
+        logger.critical('Failed to get user')
+
+
+# Takes user ID and add them to on call group. This also automatically removes
+# the previous person
+def add_users_to_group(user_ids,groupid):
+    payload = {}
+    payload['token'] = SLACK_API_KEY
+    payload['usergroup'] = groupid
+    payload['users'] = user_ids
+    try:
+        r = post('https://slack.com/api/usergroups.users.update',data=payload)
+        logger.debug("Response for '{}' was: {}".format(groupid,user_ids, r.json()))
+        print('Success')
+    except KeyError:
+        logger.critical("Failed to add user to group")
 
 
 def get_slack_topic(channel):
@@ -121,11 +139,14 @@ def do_work(obj):
     topic = ""
     # 'pd_schedule_id' may contain multiple channels seperated by comma
     for schedule_id in obj['pd_schedule_id'].split(","):
-        username = get_user(schedule_id)
-        if username is not None:  # then it is valid and update the chat topic
+        user = get_user(schedule_id)
+        if user is not None:  # then it is valid and update the chat topic
             schedule_name = get_pd_schedule_name(schedule_id)
-            topic += f"{username} is on-call for {schedule_name} | "
-            logger.debug(f"username={username}, schedule_name={schedule_name}")
+            topic += f"{user['name']} is on-call for {schedule_name} | "
+            logger.debug(f"username={user['name']}, schedule_name={schedule_name}")
+            get_user_id(user['email'])
+            user_id = get_user_id(user['email'])
+            add_users_to_group(user_id,SLACK_GROUP_ID)
     if topic != "":
         update_slack_topic(obj["slack_channel_id"], topic[0:-3])
     else:

@@ -42,7 +42,7 @@ def get_user(schedule_id):
     payload['until'] = now.isoformat()
     normal = get(normal_url, headers=headers, params=payload)
     if normal.status_code == 404:
-        #logger.critical(f"ABORT: Not a valid schedule: {schedule_id}")
+        logger.critical(f"ABORT: Not a valid schedule: {schedule_id}")
         return False
     try:
         return normal.json()['users'][0]
@@ -169,3 +169,4 @@ def handler(request, event):
 
 if __name__ == "__main__":
     handler(None, None)
+    

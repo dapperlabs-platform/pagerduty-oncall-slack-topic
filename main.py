@@ -1,11 +1,9 @@
-#!/usr/bin/env python
 
 import os
-from datetime import datetime, timezone, timedelta
 from requests import get, post
 import threading
 import logging
-import re
+from datetime import datetime, timezone, timedelta
 import json
 from google.cloud import secretmanager
 
@@ -18,21 +16,20 @@ smclient = secretmanager.SecretManagerServiceClient()
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger()
 
-# [{"slack_channel_id": "foo", "pd_schedule_id": "bar"},{"slack_channel_id": "boo", "pd_schedule_id": "baz,moz"}]
-SCHEDULE_CONFIG = os.environ['SCHEDULE_CONFIG']
+ONCALL_CONFIG_NEW = os.environ['ONCALL_CONFIG_NEW']
 PAGERDUTY_API_KEY = smclient.access_secret_version(
     request={"name": os.environ['PAGERDUTY_API_KEY_SECRET_NAME']}).payload.data.decode("UTF-8") if os.getenv('PAGERDUTY_API_KEY') is None else os.environ['PAGERDUTY_API_KEY']
 SLACK_API_KEY = smclient.access_secret_version(
     request={"name": os.environ['SLACK_API_KEY_SECRET_NAME']}).payload.data.decode("UTF-8") if os.getenv('SLACK_API_KEY') is None else os.environ['SLACK_API_KEY']
+user_ids = []
 
-
+# Gets user on calls email from PD schedule ID
 def get_user(schedule_id):
     headers = {
         'Accept': 'application/vnd.pagerduty+json;version=2',
         'Authorization': f"Token token={PAGERDUTY_API_KEY}"
     }
     normal_url = f'https://api.pagerduty.com/schedules/{schedule_id}/users'
-    override_url = f'https://api.pagerduty.com/schedules/{schedule_id}/overrides'
     # This value should be less than the running interval
     # It is best to use UTC for the datetime object
     now = datetime.now(timezone.utc)
@@ -45,106 +42,73 @@ def get_user(schedule_id):
         logger.critical(f"ABORT: Not a valid schedule: {schedule_id}")
         return False
     try:
-        username = normal.json()['users'][0]['name']
-        # Check for overrides
-        # If there is *any* override, then the above username is an override
-        # over the normal schedule. The problem must be approached this way
-        # because the /overrides endpoint does not guarentee an order of the
-        # output.
-        override = get(override_url, headers=headers, params=payload)
-        if override.json()['overrides']:  # is not empty list
-            username = username + " (Override)"
+        return normal.json()['users'][0]
     except IndexError:
-        username = "No One :thisisfine:"
+        print(f"No user found for schedule {schedule_id}")
 
-    logger.info(f"Currently on call: {username}")
-    return username
-
-
-def get_pd_schedule_name(schedule_id):
-    headers = {
-        'Accept': 'application/vnd.pagerduty+json;version=2',
-        'Authorization': f"Token token={PAGERDUTY_API_KEY}"
-    }
-    url = f'https://api.pagerduty.com/schedules/{schedule_id}'
-    r = get(url, headers=headers)
-    try:
-        return r.json()['schedule']['name']
-    except KeyError:
-        logger.debug(r.status_code)
-        logger.debug(r.json())
-        return None
-
-
-def get_slack_topic(channel):
+# Looks up user by email and returns userID
+def get_user_id(email):
     payload = {}
     payload['token'] = SLACK_API_KEY
-    payload['channel'] = channel
+    payload['email'] = email
     try:
-        r = post(
-            'https://slack.com/api/conversations.info', data=payload)
-        current = r.json()['channel']['topic']['value']
-        logger.debug("Current Topic: '{}'".format(current))
+        r = post('https://slack.com/api/users.lookupByEmail', data=payload)
+        current = r.json()['user']['id']
+        logger.debug("User ID: '{}'".format(current))
         return current
     except KeyError:
-        logger.critical(
-            f"Could not find '{channel}' on slack, has the on-call bot been removed from this channel?")
+        logger.critical('Failed to get user')
 
-
-def update_slack_topic(channel, proposed_update):
-    logger.debug(
-        f"Entered update_slack_topic() with: {channel} {proposed_update}")
+# Adds users to Slack group based on their Slack ID
+def add_users_to_group(user_ids,groupid):
     payload = {}
     payload['token'] = SLACK_API_KEY
-    payload['channel'] = channel
+    payload['usergroup'] = groupid
+    payload['users'] = str(user_ids)
+    try:
+        r = post('https://slack.com/api/usergroups.users.update',data=payload)
+        logger.debug("Response for '{}' was: {}".format(groupid,user_ids, r.json()))
+        print('Success')
+    except KeyError:
+        logger.critical("Failed to add user to group")
 
-    slack_topic = get_slack_topic(channel)
+# do work for on-call people
+def oncall(obj):
+    for pd_oncall_schedule_id in obj['pd_oncall_id']:
+        try:
+            user = get_user(pd_oncall_schedule_id)
+            userid = get_user_id(user['email'])
+        except KeyError:
+            logger.critical("Nope, Doesn't Work")
+    add_users_to_group(userid, obj['oncall_slack_group_id'])
 
-    if proposed_update != slack_topic:
-        topic = proposed_update
-        # slack limits topic to 250 chars
-        if len(proposed_update) > 250:
-            topic = proposed_update[0:247] + "..."
-        payload['topic'] = topic
-        r = post(
-            'https://slack.com/api/conversations.setTopic', data=payload)
-        logger.debug("Response for '{}' was: {}".format(channel, r.json()))
-    else:
-        logger.info("Not updating slack, topic is the same")
-        return None
+# do work for support people
+def support(obj):
+    for pd_support_schedule_id in obj['pd_support_id'].split(','):
+        try:
+            user = get_user(pd_support_schedule_id)
+            user_ids.append(get_user_id(user['email']))
+        except KeyError:
+            logger.critical("NOPE, doesn't work")   
+    add_users_to_group(user_ids, obj['support_slack_group_id'])
 
-
-def do_work(obj):
-    # entrypoint of the thread
-    sema.acquire()
-    logger.debug("Operating on {}".format(obj))
-    topic = ""
-    # 'pd_schedule_id' may contain multiple channels seperated by comma
-    for schedule_id in obj['pd_schedule_id'].split(","):
-        username = get_user(schedule_id)
-        if username is not None:  # then it is valid and update the chat topic
-            schedule_name = get_pd_schedule_name(schedule_id)
-            topic += f"{username} is on-call for {schedule_name} | "
-            logger.debug(f"username={username}, schedule_name={schedule_name}")
-    if topic != "":
-        update_slack_topic(obj["slack_channel_id"], topic[0:-3])
-    else:
-        logger.info("Not updating slack, topic is empty")
-    sema.release()
-
-
-def handler(request, event):
-    config = json.loads(SCHEDULE_CONFIG)
-    threads = []
+def handler(request,event):
+    config = json.loads(ONCALL_CONFIG_NEW)
+    threads_oncall = []
     for schedule in config:
-        thread = threading.Thread(target=do_work, args=(schedule,))
-        threads.append(thread)
-    # Start threads and wait for all to finish
-    [t.start() for t in threads]
-    [t.join() for t in threads]
+        thread_oncall = threading.Thread(target=oncall, args=(schedule,))
+        threads_oncall.append(thread_oncall)
+    [t.start() for t in threads_oncall]
+    [t.join() for t in threads_oncall]
+    threads_support = []
+    for schedule in config:
+        thread_support = threading.Thread(target=support, args=(schedule,))
+        threads_support.append(thread_support)
+    [t.start() for t in threads_support]
+    [t.join() for t in threads_support]
+
 
     return 0
 
-
 if __name__ == "__main__":
-    handler(None, None)
+    handler(None,None)

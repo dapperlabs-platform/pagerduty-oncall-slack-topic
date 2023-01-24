@@ -16,7 +16,7 @@ smclient = secretmanager.SecretManagerServiceClient()
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger()
 
-ONCALL_CONFIG_NEW = os.environ['ONCALL_CONFIG_NEW']
+SCHEDULE_CONFIG_NEW = os.environ['SCHEDULE_CONFIG_NEW']
 PAGERDUTY_API_KEY = smclient.access_secret_version(
     request={"name": os.environ['PAGERDUTY_API_KEY_SECRET_NAME']}).payload.data.decode("UTF-8") if os.getenv('PAGERDUTY_API_KEY') is None else os.environ['PAGERDUTY_API_KEY']
 SLACK_API_KEY = smclient.access_secret_version(
@@ -93,7 +93,7 @@ def support(obj):
     add_users_to_group(user_ids, obj['support_slack_group_id'])
 
 def handler(request,event):
-    config = json.loads(ONCALL_CONFIG_NEW)
+    config = json.loads(SCHEDULE_CONFIG_NEW)
     threads_oncall = []
     for schedule in config:
         thread_oncall = threading.Thread(target=oncall, args=(schedule,))
